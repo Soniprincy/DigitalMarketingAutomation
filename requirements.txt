@@ -1,5 +1,7 @@
 streamlit
-pillow
 moviepy
+pillow
 python-docx
-tqdm
+textwrap3
+imageio[ffmpeg]
+ffmpeg-python
