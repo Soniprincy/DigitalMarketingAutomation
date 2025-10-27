@@ -2,8 +2,10 @@ import streamlit as st
 import os
 import textwrap
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import ImageClip, concatenate_videoclips
+from moviepy.editor import ImageClip
 from docx import Document
+import shutil  # for zipping
+import io
 
 # ================================
 # FUNCTIONS
@@ -39,11 +41,11 @@ def create_text_files(topic, outdir):
     )
     keywords = "Data Science, Machine Learning, AI, Python, Training, Basics, Beginners, Career"
 
-    with open(os.path.join(outdir, "tagline.txt"), "w") as f:
+    with open(os.path.join(outdir, "tagline.txt"), "w", encoding="utf-8") as f:
         f.write(tagline)
-    with open(os.path.join(outdir, "description.txt"), "w") as f:
+    with open(os.path.join(outdir, "description.txt"), "w", encoding="utf-8") as f:
         f.write(description)
-    with open(os.path.join(outdir, "keywords.txt"), "w") as f:
+    with open(os.path.join(outdir, "keywords.txt"), "w", encoding="utf-8") as f:
         f.write(keywords)
 
 
@@ -64,7 +66,7 @@ def create_video(topic, outdir):
     img_path = os.path.join(outdir, "video_slide.png")
     img.save(img_path)
 
-    clip = ImageClip(img_path).set_duration(200)  # 200 sec video
+    clip = ImageClip(img_path).set_duration(10)  # shorter duration for demo
     clip.write_videofile(os.path.join(outdir, "short_video.mp4"), fps=24, verbose=False, logger=None)
 
 
@@ -96,7 +98,7 @@ def create_linkedin_post(topic, link, outdir):
 Register now 👉 {link}
 #DataScience #AI #Learning #Education #CareerGrowth
 """
-    with open(os.path.join(outdir, "linkedin_post.txt"), "w") as f:
+    with open(os.path.join(outdir, "linkedin_post.txt"), "w", encoding="utf-8") as f:
         f.write(post)
 
 
@@ -116,14 +118,21 @@ def generate_all(topic, link):
     outdir = "output"
     os.makedirs(outdir, exist_ok=True)
 
-    st.info("✨ Generating all marketing materials... please wait.")
     create_banner(topic, "main_banner", color=(25, 90, 200), outdir=outdir)
     create_text_files(topic, outdir)
     create_video(topic, outdir)
     create_blog(topic, outdir)
     create_linkedin_post(topic, link, outdir)
     create_offer_banners(topic, outdir)
-    st.success("✅ All files generated successfully! Check the 'output' folder.")
+
+    # Create ZIP file in memory
+    zip_buffer = io.BytesIO()
+    shutil.make_archive("marketing_assets", 'zip', outdir)
+    with open("marketing_assets.zip", "rb") as f:
+        zip_buffer.write(f.read())
+
+    zip_buffer.seek(0)
+    return zip_buffer
 
 
 # ================================
@@ -137,9 +146,17 @@ st.write("Automatically generate banners, videos, blogs, LinkedIn posts, and off
 topic = st.text_input("Enter Topic:", "Data Science Basic Training Program for Everyone")
 link = st.text_input("Enter Link:", "https://example.com")
 
-if st.button("🚀 Generate Files"):
-    generate_all(topic, link)
-    st.balloons()
+if st.button("🚀 Generate & Download Files"):
+    with st.spinner("✨ Generating all marketing materials... please wait."):
+        zip_data = generate_all(topic, link)
+        st.success("✅ All files generated successfully!")
+
+        st.download_button(
+            label="⬇️ Download All Marketing Files (ZIP)",
+            data=zip_data,
+            file_name="marketing_assets.zip",
+            mime="application/zip"
+        )
 
 st.markdown("---")
-st.markdown("**Output Folder:** All generated files are saved in the `output/` directory on your system.")
+st.caption("All generated files are packaged as a downloadable ZIP.")
