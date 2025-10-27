@@ -1,3 +1,7 @@
+import sys, subprocess
+subprocess.run([sys.executable, "-m", "pip", "install", "moviepy==1.0.3"], check=True)
+from moviepy.editor import ImageClip
+
 import streamlit as st
 import os
 import textwrap
