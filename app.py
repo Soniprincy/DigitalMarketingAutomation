@@ -161,188 +161,315 @@
 # st.markdown("---")
 # st.caption("All generated files are packaged as a downloadable ZIP.")
 
+# app.py
 import os
-import textwrap
 import io
-import shutil
+import zipfile
+import textwrap
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import ImageClip, concatenate_videoclips
-from matplotlib import font_manager
 import streamlit as st
 
-# ----------------------------- FONT SETUP -----------------------------
-def load_font(size):
-    """Load a scalable cross-platform font."""
+# ---------------------------
+# Configuration / Theme
+# ---------------------------
+THEME = {
+    "name": "Modern Blue Gradient",
+    "colors": [(25, 118, 210), (3, 169, 244)],  # top -> bottom
+    "image_size": (1280, 720),
+    "banner_size": (1200, 600)
+}
+
+# ---------------------------
+# Robust font loader (works on Streamlit Cloud)
+# ---------------------------
+def load_font(size: int):
+    """Try Arial, then DejaVu, then fall back to PIL default."""
     try:
         return ImageFont.truetype("arial.ttf", size)
-    except:
-        font_path = font_manager.findfont("DejaVuSans-Bold")
-        return ImageFont.truetype(font_path, size)
+    except Exception:
+        try:
+            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
+        except Exception:
+            try:
+                return ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", size)
+            except Exception:
+                return ImageFont.load_default()
 
+# ---------------------------
+# Utilities: gradient & contrast
+# ---------------------------
+def vertical_gradient(size, top_color, bottom_color):
+    """Return an Image with vertical gradient from top_color to bottom_color."""
+    w, h = size
+    base = Image.new('RGB', size, top_color)
+    top = Image.new('RGB', size, bottom_color)
+    mask = Image.new('L', (1, h))
+    for y in range(h):
+        mask.putpixel((0, y), int(255 * (y / (h - 1))))
+    mask = mask.resize(size)
+    return Image.composite(top, base, mask)
 
-# ----------------------------- OUTLINED TEXT -----------------------------
-def draw_outlined_text(draw, position, text, font, fill="white", outline="black", outline_width=4):
+def relative_luminance(rgb):
+    """Calculate relative luminance (0..1)."""
+    r, g, b = [v / 255.0 for v in rgb]
+    def lin(c):
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055)/1.055) ** 2.4
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+def pick_text_colors(bg_top, bg_bottom):
+    """Return (fill_color, outline_color) chosen for contrast against gradient midpoint."""
+    mid = tuple(int((a + b) / 2) for a, b in zip(bg_top, bg_bottom))
+    lum = relative_luminance(mid)
+    # If background is dark (lum < 0.5) use white fill with dark outline; otherwise dark fill with light outline
+    if lum < 0.5:
+        return ("white", "black")
+    else:
+        return ("black", "white")
+
+# ---------------------------
+# Text drawing helpers
+# ---------------------------
+def draw_text_with_outline(draw, position, text, font, fill, outline, outline_width=3):
     x, y = position
+    # draw outline
     for ox in range(-outline_width, outline_width + 1):
         for oy in range(-outline_width, outline_width + 1):
+            if ox == 0 and oy == 0:
+                continue
             draw.text((x + ox, y + oy), text, font=font, fill=outline)
+    # main text
     draw.text((x, y), text, font=font, fill=fill)
 
+def fit_font_for_multiline(draw, text_lines, font_name_loader, max_width, max_font_size, min_font_size=20, line_spacing=8):
+    """
+    Find largest font size such that all lines fit within max_width.
+    font_name_loader: function(size)->ImageFont
+    """
+    size = max_font_size
+    while size >= min_font_size:
+        font = font_name_loader(size)
+        too_big = False
+        for line in text_lines:
+            bbox = draw.textbbox((0,0), line, font=font)
+            if bbox[2] - bbox[0] > max_width:
+                too_big = True
+                break
+        if not too_big:
+            return font
+        size -= 2
+    return font_name_loader(min_font_size)
 
-# ----------------------------- POSTER CREATION -----------------------------
-def create_banner(text, filename, color=(25, 90, 200), outdir="output"):
+def wrap_to_lines(text, max_chars=24):
+    return textwrap.wrap(text, width=max_chars)
+
+# ---------------------------
+# Banner / Poster generation
+# ---------------------------
+def create_poster(text, filename, outdir, size=None, top_color=None, bottom_color=None):
     os.makedirs(outdir, exist_ok=True)
-    img = Image.new('RGB', (1280, 720), color=color)
-    draw = ImageDraw.Draw(img)
-    font = load_font(90)
+    if size is None:
+        size = THEME["image_size"]
+    if top_color is None or bottom_color is None:
+        top_color, bottom_color = THEME["colors"]
 
-    lines = textwrap.wrap(text, width=12)
-    total_h = sum([draw.textbbox((0, 0), l, font=font)[3] for l in lines]) + len(lines) * 25
-    y_text = (720 - total_h) // 2
+    bg = vertical_gradient(size, top_color, bottom_color)
+    draw = ImageDraw.Draw(bg)
 
+    # pick colors for text/outline
+    fill_color, outline_color = pick_text_colors(top_color, bottom_color)
+
+    # prepare lines
+    lines = wrap_to_lines(text, max_chars=20)
+    # fit font
+    max_width = int(size[0]*0.85)
+    # start with a large font and shrink to fit
+    font = fit_font_for_multiline(draw, lines, load_font, max_width, max_font_size=int(size[1]*0.14))
+
+    # compute total height
+    heights = [draw.textbbox((0,0), line, font=font)[3] - draw.textbbox((0,0), line, font=font)[1] for line in lines]
+    total_h = sum(heights) + (len(lines)-1) * 12
+
+    y = (size[1] - total_h) // 2
     for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        w = bbox[2] - bbox[0]
-        x = (1280 - w) / 2
-        draw_outlined_text(draw, (x, y_text), line, font, fill="white", outline="black", outline_width=4)
-        y_text += bbox[3] + 25
+        bbox = draw.textbbox((0,0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = (size[0] - text_w) // 2
+        draw_text_with_outline(draw, (x, y), line, font, fill_color, outline_color, outline_width=max(2, int(font.size * 0.04)))
+        y += (bbox[3] - bbox[1]) + 12
 
-    img.save(os.path.join(outdir, f"{filename}.jpg"))
-    img.save(os.path.join(outdir, f"{filename}.png"))
-    return os.path.join(outdir, f"{filename}.jpg")
+    # save jpg + png
+    jpg_path = os.path.join(outdir, f"{filename}.jpg")
+    png_path = os.path.join(outdir, f"{filename}.png")
+    bg.save(jpg_path, quality=90)
+    bg.save(png_path)
+    return jpg_path, png_path
 
-
-# ----------------------------- VIDEO CREATION -----------------------------
-def create_video(topic, outdir):
+# ---------------------------
+# Create multiple outputs
+# ---------------------------
+def create_text_files(topic, outdir):
     os.makedirs(outdir, exist_ok=True)
-    slides = [
-        f"🚀 Welcome to {topic}",
+    tagline = f"Empower yourself with {topic} — from basics to mastery!"
+    description = (
+        f"The {topic} program introduces learners to fundamentals of data science: "
+        "data collection, exploration, visualization, and simple ML. Hands-on projects included."
+    )
+    keywords = "Data Science, Machine Learning, AI, Python, Training, Beginners, Career"
+
+    with open(os.path.join(outdir, "tagline.txt"), "w", encoding="utf-8") as f:
+        f.write(tagline)
+    with open(os.path.join(outdir, "description.txt"), "w", encoding="utf-8") as f:
+        f.write(description)
+    with open(os.path.join(outdir, "keywords.txt"), "w", encoding="utf-8") as f:
+        f.write(keywords)
+
+def create_blog(topic, outdir):
+    os.makedirs(outdir, exist_ok=True)
+    blog_text = f"""# {topic}
+
+The {topic} is a beginner-friendly program that introduces you to practical data skills...
+(Use this as a starter — edit as needed.)
+"""
+    with open(os.path.join(outdir, "blog.txt"), "w", encoding="utf-8") as f:
+        f.write(blog_text)
+
+def create_linkedin_post(topic, link, outdir):
+    os.makedirs(outdir, exist_ok=True)
+    post = f"""🚀 Launching: {topic}!
+
+Learn Data Science step-by-step with hands-on projects.
+Register: {link}
+
+#DataScience #AI #Learning
+"""
+    with open(os.path.join(outdir, "linkedin_post.txt"), "w", encoding="utf-8") as f:
+        f.write(post)
+
+# ---------------------------
+# Video generation (short promo ≈ 8s)
+# ---------------------------
+def create_short_video(topic, outdir):
+    os.makedirs(outdir, exist_ok=True)
+    size = THEME["image_size"]
+    top_color, bottom_color = THEME["colors"]
+    fill_color, outline_color = pick_text_colors(top_color, bottom_color)
+
+    slides_text = [
+        f"🚀 {topic}",
         "📊 Learn Data Science Step-by-Step",
         "💡 Build Real Projects & Master ML",
         "✨ Start Your Data Journey Today!"
     ]
 
     clips = []
-    for i, text in enumerate(slides):
-        img = Image.new("RGB", (1280, 720))
-        draw = ImageDraw.Draw(img)
-
-        # Gradient background
-        for y in range(720):
-            color = (int(30 + y/4), int(90 + y/8), int(180 + y/6))
-            draw.line([(0, y), (1280, y)], fill=color)
-
-        font = load_font(70)
-        lines = textwrap.wrap(text, width=14)
-        total_h = sum([draw.textbbox((0, 0), l, font=font)[3] for l in lines]) + len(lines) * 25
-        y_text = (720 - total_h) // 2
-
+    # create images for slides
+    for idx, text in enumerate(slides_text, start=1):
+        bg = vertical_gradient(size, top_color, bottom_color)
+        draw = ImageDraw.Draw(bg)
+        # use slightly smaller font for video
+        lines = wrap_to_lines(text, max_chars=24)
+        font = fit_font_for_multiline(draw, lines, load_font, int(size[0]*0.9), max_font_size=int(size[1]*0.12))
+        # center vertically
+        heights = [draw.textbbox((0,0), line, font=font)[3] - draw.textbbox((0,0), line, font=font)[1] for line in lines]
+        total_h = sum(heights) + (len(lines)-1)*10
+        y = (size[1] - total_h)//2
         for line in lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            w = bbox[2] - bbox[0]
-            x = (1280 - w) / 2
-            draw_outlined_text(draw, (x, y_text), line, font, fill="white", outline="black", outline_width=4)
-            y_text += bbox[3] + 25
+            bbox = draw.textbbox((0,0), line, font=font)
+            text_w = bbox[2] - bbox[0]
+            x = (size[0] - text_w)//2
+            draw_text_with_outline(draw, (x, y), line, font, fill_color, outline_color, outline_width=max(2, int(font.size * 0.04)))
+            y += (bbox[3] - bbox[1]) + 10
 
-        img_path = os.path.join(outdir, f"slide_{i+1}.png")
-        img.save(img_path)
-        clip = ImageClip(img_path).set_duration(5)  # short slide (5s per slide)
+        img_path = os.path.join(outdir, f"video_slide_{idx}.png")
+        bg.save(img_path)
+        clip = ImageClip(img_path).set_duration(2)  # 2s per slide
         clips.append(clip)
 
     final = concatenate_videoclips(clips, method="compose")
-    video_path = os.path.join(outdir, "promo_video.mp4")
-    final.write_videofile(video_path, fps=24, verbose=False, logger=None)
+    video_path = os.path.join(outdir, "short_promo.mp4")
+    # write video (MoviePy will use ffmpeg; ensure ffmpeg available on host)
+    final.write_videofile(video_path, fps=24, audio=False, verbose=False, logger=None)
     return video_path
 
-
-# ----------------------------- CONTENT GENERATION -----------------------------
-def generate_text_files(topic, outdir):
-    tagline = f"Empowering your future with {topic}!"
-    desc = f"The {topic} is a beginner-friendly program designed to help you learn data analysis, visualization, and machine learning — step by step with real-world insights."
-    keywords = "Data Science, AI, Machine Learning, Analytics, Python, Online Learning, Upskill"
-
-    with open(os.path.join(outdir, "tagline.txt"), "w", encoding="utf-8") as f:
-        f.write(tagline)
-    with open(os.path.join(outdir, "description.txt"), "w", encoding="utf-8") as f:
-        f.write(desc)
-    with open(os.path.join(outdir, "keywords.txt"), "w", encoding="utf-8") as f:
-        f.write(keywords)
-
-
-# ----------------------------- BLOG + LINKEDIN POST -----------------------------
-def generate_blog_and_post(topic, outdir):
-    blog = f"""# {topic}: Start Your Data Journey
-
-The {topic} is designed to introduce you to core data concepts, hands-on tools, and real-world insights.
-
-### What You’ll Learn:
-- Data analysis with Python
-- Visualization with Power BI & Matplotlib
-- Basic Machine Learning models
-- Real-world project experience
-
-Learn, apply, and grow — your data career starts here!
-"""
-    linkedin_post = f"""🚀 Launching: **{topic}!**
-
-Master the essentials of Data Science — from data collection to machine learning.  
-Perfect for beginners looking to upskill and boost their career!  
-
-#DataScience #AI #Learning #CareerGrowth
-"""
-    with open(os.path.join(outdir, "blog.txt"), "w", encoding="utf-8") as f:
-        f.write(blog)
-    with open(os.path.join(outdir, "linkedin_post.txt"), "w", encoding="utf-8") as f:
-        f.write(linkedin_post)
-
-
-# ----------------------------- OFFER POSTERS -----------------------------
-def create_offer_posters(topic, outdir):
+# ---------------------------
+# Offer banners (4 variants)
+# ---------------------------
+def create_offer_banners(topic, outdir):
+    os.makedirs(outdir, exist_ok=True)
     offers = [
-        "🔥 50% OFF - Limited Time!",
-        "🎯 Enroll Now & Get Free Certification!",
-        "🚀 Start Learning Today!",
-        "🎓 Special Offer for Students!"
+        ("🎉 Flat 50% Off — Enroll Today!", (255, 87, 34), (255, 152, 0)),
+        ("🔥 Early Bird — Limited Seats!", (77, 182, 172), (0, 150, 136)),
+        ("🚀 Join Now — Free Templates!", (63, 81, 181), (3, 169, 244)),
+        ("🎓 Student Special — Discount!", (156, 39, 176), (103, 58, 183))
     ]
-    colors = [(255, 87, 51), (60, 179, 113), (65, 105, 225), (218, 112, 214)]
-    for i, offer in enumerate(offers):
-        create_banner(f"{topic}\n{offer}", f"offer_banner_{i+1}", colors[i], outdir)
+    for i, (offer_text, c1, c2) in enumerate(offers, start=1):
+        # make gradient per-offer: top c1, bottom c2
+        create_poster(f"{topic}\n{offer_text}", f"offer_{i}", outdir, size=(1200, 600), top_color=c1, bottom_color=c2)
 
-
-# ----------------------------- MAIN GENERATION -----------------------------
-def generate_all(topic):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    outdir = os.path.join("output", f"{topic.replace(' ', '_')}_{timestamp}")
+# ---------------------------
+# Master generator + ZIP builder (in-memory)
+# ---------------------------
+def generate_all_assets(topic, link):
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    outdir = os.path.join("output", f"{topic.replace(' ', '_')}_{stamp}")
     os.makedirs(outdir, exist_ok=True)
 
-    create_banner(topic, "main_banner", (30, 90, 160), outdir)
-    generate_text_files(topic, outdir)
-    create_video(topic, outdir)
-    generate_blog_and_post(topic, outdir)
-    create_offer_posters(topic, outdir)
+    # 1. Main banner (large)
+    create_poster(topic, "main_banner", outdir, size=THEME["banner_size"], top_color=THEME["colors"][0], bottom_color=THEME["colors"][1])
 
-    # Create ZIP for download
-    zip_path = f"{outdir}.zip"
-    shutil.make_archive(outdir, "zip", outdir)
-    return zip_path
+    # 2. Text files
+    create_text_files(topic, outdir)
 
+    # 3. Short video (~8s)
+    create_short_video(topic, outdir)
 
-# ----------------------------- STREAMLIT UI -----------------------------
-st.set_page_config(page_title="Digital Marketing Automation", layout="centered")
+    # 4. Blog + LinkedIn
+    create_blog(topic, outdir)
+    create_linkedin_post(topic, link, outdir)
+
+    # 5. Offer posters
+    create_offer_banners(topic, outdir)
+
+    # 6. Make ZIP in-memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zipf:
+        for foldername, _, filenames in os.walk(outdir):
+            for fname in filenames:
+                fullpath = os.path.join(foldername, fname)
+                arcname = os.path.relpath(fullpath, outdir)
+                zipf.write(fullpath, arcname)
+    zip_buffer.seek(0)
+    # Optionally: cleanup outdir (keep if you want)
+    try:
+        # remove created files to keep workspace clean
+        for foldername, _, filenames in os.walk(outdir):
+            for fname in filenames:
+                os.remove(os.path.join(foldername, fname))
+        os.rmdir(outdir)
+    except Exception:
+        pass
+
+    return zip_buffer
+
+# ---------------------------
+# Streamlit UI (minimal: only download)
+# ---------------------------
+st.set_page_config(page_title="Digital Marketing Automation", page_icon="🎯", layout="centered")
 st.title("🎯 Digital Marketing Automation App")
-st.write("Generate professional marketing assets in one click — banners, offers, video, blog & more!")
+st.write("Generates banners, posters, short promo video, blog & LinkedIn post — then packages everything into a single ZIP for download.")
 
 topic = st.text_input("Enter your campaign topic:", "Data Science Basic Training Program for Everyone")
+link = st.text_input("Enter registration / campaign link:", "https://example.com")
 
-if st.button("🚀 Generate & Download"):
-    with st.spinner("✨ Generating all marketing materials... please wait."):
-        zip_path = generate_all(topic)
-    with open(zip_path, "rb") as f:
-        st.download_button(
-            label="⬇️ Download All Files (ZIP)",
-            data=f,
-            file_name=os.path.basename(zip_path),
-            mime="application/zip"
-        )
-    st.success("✅ All files generated successfully!")
+if st.button("Generate & Download ZIP"):
+    with st.spinner("Generating visuals — this may take a few seconds..."):
+        zip_buffer = generate_all_assets(topic, link)
+    st.success("✅ ZIP ready — click to download.")
+    st.download_button(
+        label="⬇️ Download All Marketing Assets (ZIP)",
+        data=zip_buffer.getvalue(),
+        file_name=f"marketing_assets_{topic.replace(' ','_')}.zip",
+        mime="application/zip"
+    )
