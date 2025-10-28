@@ -1,0 +1,11 @@
+# Data Science Basic Training Program for Everyone: Start Your Data Journey
+
+The Data Science Basic Training Program for Everyone is designed to introduce you to core data concepts, hands-on tools, and real-world insights.
+
+### What You’ll Learn:
+- Data analysis with Python
+- Visualization with Power BI & Matplotlib
+- Basic Machine Learning models
+- Real-world project experience
+
+Learn, apply, and grow — your data career starts here!

@@ -1,0 +1,12 @@
+# Data Science Basic Training Program for Everyone: Transform Your Career with Data Skills
+
+Data Science is one of the most in-demand skills today.  
+With the *Data Science Basic Training Program for Everyone*, you’ll learn to collect, clean, and analyze data to uncover insights that drive decisions.
+
+### What You’ll Learn:
+- Data analysis with Python
+- Visualization using Power BI and Matplotlib
+- Machine learning fundamentals
+- Real-world projects and case studies
+
+Start your data journey today! 🚀

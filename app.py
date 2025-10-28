@@ -163,101 +163,91 @@
 
 import os
 import textwrap
+import io
 import shutil
-import zipfile
-import streamlit as st
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import ImageClip, concatenate_videoclips
-from docx import Document
+from matplotlib import font_manager
+import streamlit as st
 
-# =======================================================
-# Helper Functions
-# =======================================================
+# ----------------------------- FONT SETUP -----------------------------
+def load_font(size):
+    """Load a scalable cross-platform font."""
+    try:
+        return ImageFont.truetype("arial.ttf", size)
+    except:
+        font_path = font_manager.findfont("DejaVuSans-Bold")
+        return ImageFont.truetype(font_path, size)
+
+
+# ----------------------------- OUTLINED TEXT -----------------------------
+def draw_outlined_text(draw, position, text, font, fill="white", outline="black", outline_width=4):
+    x, y = position
+    for ox in range(-outline_width, outline_width + 1):
+        for oy in range(-outline_width, outline_width + 1):
+            draw.text((x + ox, y + oy), text, font=font, fill=outline)
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+# ----------------------------- POSTER CREATION -----------------------------
 def create_banner(text, filename, color=(25, 90, 200), outdir="output"):
     os.makedirs(outdir, exist_ok=True)
     img = Image.new('RGB', (1280, 720), color=color)
     draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype("arial.ttf", 60)
-    except:
-        font = ImageFont.load_default()
+    font = load_font(90)
 
-    # Wrap text
-    lines = textwrap.wrap(text, width=15)
-    total_h = sum([draw.textbbox((0, 0), l, font=font)[3] for l in lines]) + len(lines) * 15
+    lines = textwrap.wrap(text, width=12)
+    total_h = sum([draw.textbbox((0, 0), l, font=font)[3] for l in lines]) + len(lines) * 25
     y_text = (720 - total_h) // 2
 
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         w = bbox[2] - bbox[0]
         x = (1280 - w) / 2
-        draw.text((x + 3, y_text + 3), line, font=font, fill="black")
-        draw.text((x, y_text), line, font=font, fill="white")
-        y_text += bbox[3] + 15
+        draw_outlined_text(draw, (x, y_text), line, font, fill="white", outline="black", outline_width=4)
+        y_text += bbox[3] + 25
 
     img.save(os.path.join(outdir, f"{filename}.jpg"))
     img.save(os.path.join(outdir, f"{filename}.png"))
+    return os.path.join(outdir, f"{filename}.jpg")
 
 
-def create_text_files(topic, outdir):
-    os.makedirs(outdir, exist_ok=True)
-    tagline = f"Empower yourself with {topic} — from basics to mastery!"
-    description = (
-        f"The {topic} program introduces learners to the fundamentals of {topic}. "
-        f"From understanding data to building practical projects, this course is "
-        f"ideal for beginners aiming to launch a successful data-driven career."
-    )
-    keywords = f"{topic}, Machine Learning, AI, Python, Data Science, Training, Beginners, Career"
-
-    with open(os.path.join(outdir, "tagline.txt"), "w", encoding="utf-8") as f:
-        f.write(tagline)
-    with open(os.path.join(outdir, "description.txt"), "w", encoding="utf-8") as f:
-        f.write(description)
-    with open(os.path.join(outdir, "keywords.txt"), "w", encoding="utf-8") as f:
-        f.write(keywords)
-
-
+# ----------------------------- VIDEO CREATION -----------------------------
 def create_video(topic, outdir):
     os.makedirs(outdir, exist_ok=True)
     slides = [
         f"🚀 Welcome to {topic}",
-        "📊 Learn the Power of Data Science",
-        "💡 Build Real-World Projects",
-        "🎯 Master Machine Learning Basics",
-        "📚 From Data to Decisions",
-        "🔥 Join Thousands of Learners",
-        "✨ Transform Your Future with Data"
+        "📊 Learn Data Science Step-by-Step",
+        "💡 Build Real Projects & Master ML",
+        "✨ Start Your Data Journey Today!"
     ]
 
     clips = []
     for i, text in enumerate(slides):
         img = Image.new("RGB", (1280, 720))
         draw = ImageDraw.Draw(img)
+
         # Gradient background
         for y in range(720):
-            color = (int(20 + y/3), int(70 + y/6), int(130 + y/4))
+            color = (int(30 + y/4), int(90 + y/8), int(180 + y/6))
             draw.line([(0, y), (1280, y)], fill=color)
-        try:
-            font = ImageFont.truetype("arial.ttf", 60)
-        except:
-            font = ImageFont.load_default()
 
-        # Wrap text
-        lines = textwrap.wrap(text, width=18)
-        total_h = sum([draw.textbbox((0, 0), l, font=font)[3] for l in lines]) + len(lines) * 20
-        y_text = (720 - total_h) / 2
+        font = load_font(70)
+        lines = textwrap.wrap(text, width=14)
+        total_h = sum([draw.textbbox((0, 0), l, font=font)[3] for l in lines]) + len(lines) * 25
+        y_text = (720 - total_h) // 2
 
         for line in lines:
             bbox = draw.textbbox((0, 0), line, font=font)
             w = bbox[2] - bbox[0]
             x = (1280 - w) / 2
-            draw.text((x + 3, y_text + 3), line, font=font, fill="black")
-            draw.text((x, y_text), line, font=font, fill="white")
-            y_text += bbox[3] + 20
+            draw_outlined_text(draw, (x, y_text), line, font, fill="white", outline="black", outline_width=4)
+            y_text += bbox[3] + 25
 
         img_path = os.path.join(outdir, f"slide_{i+1}.png")
         img.save(img_path)
-        clip = ImageClip(img_path).set_duration(200 / len(slides))  # Total ~200 sec
+        clip = ImageClip(img_path).set_duration(5)  # short slide (5s per slide)
         clips.append(clip)
 
     final = concatenate_videoclips(clips, method="compose")
@@ -266,115 +256,93 @@ def create_video(topic, outdir):
     return video_path
 
 
-def create_blog(topic, outdir):
-    os.makedirs(outdir, exist_ok=True)
-    blog = Document()
-    blog.add_heading(topic, level=1)
-    blog.add_paragraph(
-        f"The {topic} course introduces you to the fundamentals of data science — "
-        "from data collection and analysis to visualization and predictive modeling. "
-        "This beginner-friendly program helps learners build a strong foundation "
-        "for a career in data and analytics."
-    )
-    blog.add_paragraph("\nKey Learning Points:")
-    blog.add_paragraph("• Understanding Data Science Concepts")
-    blog.add_paragraph("• Data Cleaning, Transformation & Visualization")
-    blog.add_paragraph("• Building Predictive Models")
-    blog.add_paragraph("• Real-World Project Applications")
-    blog.add_paragraph("\nEnroll today to unlock the power of data!")
-    blog.save(os.path.join(outdir, "blog.docx"))
+# ----------------------------- CONTENT GENERATION -----------------------------
+def generate_text_files(topic, outdir):
+    tagline = f"Empowering your future with {topic}!"
+    desc = f"The {topic} is a beginner-friendly program designed to help you learn data analysis, visualization, and machine learning — step by step with real-world insights."
+    keywords = "Data Science, AI, Machine Learning, Analytics, Python, Online Learning, Upskill"
+
+    with open(os.path.join(outdir, "tagline.txt"), "w", encoding="utf-8") as f:
+        f.write(tagline)
+    with open(os.path.join(outdir, "description.txt"), "w", encoding="utf-8") as f:
+        f.write(desc)
+    with open(os.path.join(outdir, "keywords.txt"), "w", encoding="utf-8") as f:
+        f.write(keywords)
 
 
-def create_linkedin_post(topic, link, outdir):
-    os.makedirs(outdir, exist_ok=True)
-    post = f"""
-🚀 Excited to launch our new program — {topic}! 🎯
+# ----------------------------- BLOG + LINKEDIN POST -----------------------------
+def generate_blog_and_post(topic, outdir):
+    blog = f"""# {topic}: Start Your Data Journey
 
-📊 Learn how to collect, clean, and analyze data.
-💡 Build a strong foundation in Data Science and Machine Learning.
-🎓 Perfect for beginners starting their data career.
+The {topic} is designed to introduce you to core data concepts, hands-on tools, and real-world insights.
 
-Register now 👉 {link}
+### What You’ll Learn:
+- Data analysis with Python
+- Visualization with Power BI & Matplotlib
+- Basic Machine Learning models
+- Real-world project experience
 
-#DataScience #AI #Learning #CareerGrowth #Education
+Learn, apply, and grow — your data career starts here!
 """
+    linkedin_post = f"""🚀 Launching: **{topic}!**
+
+Master the essentials of Data Science — from data collection to machine learning.  
+Perfect for beginners looking to upskill and boost their career!  
+
+#DataScience #AI #Learning #CareerGrowth
+"""
+    with open(os.path.join(outdir, "blog.txt"), "w", encoding="utf-8") as f:
+        f.write(blog)
     with open(os.path.join(outdir, "linkedin_post.txt"), "w", encoding="utf-8") as f:
-        f.write(post)
+        f.write(linkedin_post)
 
 
-def create_offer_banners(topic, outdir):
-    os.makedirs(outdir, exist_ok=True)
+# ----------------------------- OFFER POSTERS -----------------------------
+def create_offer_posters(topic, outdir):
     offers = [
-        "🎉 Flat 50% Off – Enroll Today!",
-        "🔥 Early Bird Offer – Limited Seats!",
-        "🚀 Learn Data Science Now – Pay Later!",
-        "💻 Master Data Science in 30 Days!"
+        "🔥 50% OFF - Limited Time!",
+        "🎯 Enroll Now & Get Free Certification!",
+        "🚀 Start Learning Today!",
+        "🎓 Special Offer for Students!"
     ]
-    colors = [(200, 50, 50), (50, 150, 50), (50, 80, 200), (220, 140, 0)]
-    for i, (offer, color) in enumerate(zip(offers, colors)):
-        create_banner(f"{topic}\n{offer}", f"offer_banner_{i+1}", color=color, outdir=outdir)
+    colors = [(255, 87, 51), (60, 179, 113), (65, 105, 225), (218, 112, 214)]
+    for i, offer in enumerate(offers):
+        create_banner(f"{topic}\n{offer}", f"offer_banner_{i+1}", colors[i], outdir)
 
 
-# =======================================================
-# Generate Everything
-# =======================================================
-def generate_all(topic, link):
-    outdir = f"output_{topic.replace(' ', '_')}"
-    if os.path.exists(outdir):
-        shutil.rmtree(outdir)
-    os.makedirs(outdir)
+# ----------------------------- MAIN GENERATION -----------------------------
+def generate_all(topic):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    outdir = os.path.join("output", f"{topic.replace(' ', '_')}_{timestamp}")
+    os.makedirs(outdir, exist_ok=True)
 
-    # 1. Main Banner
-    create_banner(topic, "main_banner", color=(25, 90, 200), outdir=outdir)
-
-    # 2. Text Files
-    create_text_files(topic, outdir)
-
-    # 3. Video
+    create_banner(topic, "main_banner", (30, 90, 160), outdir)
+    generate_text_files(topic, outdir)
     create_video(topic, outdir)
+    generate_blog_and_post(topic, outdir)
+    create_offer_posters(topic, outdir)
 
-    # 4. Blog
-    create_blog(topic, outdir)
-
-    # 5. LinkedIn Post
-    create_linkedin_post(topic, link, outdir)
-
-    # 6. Offer Banners
-    create_offer_banners(topic, outdir)
-
-    # 7. Zip all
+    # Create ZIP for download
     zip_path = f"{outdir}.zip"
-    with zipfile.ZipFile(zip_path, "w") as zipf:
-        for root, _, files in os.walk(outdir):
-            for file in files:
-                zipf.write(os.path.join(root, file),
-                           os.path.relpath(os.path.join(root, file), outdir))
+    shutil.make_archive(outdir, "zip", outdir)
     return zip_path
 
 
-# =======================================================
-# Streamlit UI
-# =======================================================
-st.set_page_config(page_title="Digital Marketing Automation", page_icon="🎯", layout="centered")
+# ----------------------------- STREAMLIT UI -----------------------------
+st.set_page_config(page_title="Digital Marketing Automation", layout="centered")
+st.title("🎯 Digital Marketing Automation App")
+st.write("Generate professional marketing assets in one click — banners, offers, video, blog & more!")
 
-st.title("🎯 Digital Marketing Automation Tool")
-st.write("Generate complete marketing materials automatically — banners, offers, blogs, videos, and LinkedIn posts!")
+topic = st.text_input("Enter your campaign topic:", "Data Science Basic Training Program for Everyone")
 
-topic = st.text_input("Enter Topic:", "Data Science Basic Training Program for Everyone")
-link = st.text_input("Enter Campaign Link:", "https://example.com")
-
-if st.button("🚀 Generate Marketing Package"):
-    with st.spinner("✨ Creating marketing materials... please wait ⏳"):
-        zip_path = generate_all(topic, link)
-    st.success("✅ All marketing materials generated successfully!")
-
+if st.button("🚀 Generate & Download"):
+    with st.spinner("✨ Generating all marketing materials... please wait."):
+        zip_path = generate_all(topic)
     with open(zip_path, "rb") as f:
         st.download_button(
-            label="⬇️ Download Marketing Package (ZIP)",
+            label="⬇️ Download All Files (ZIP)",
             data=f,
             file_name=os.path.basename(zip_path),
             mime="application/zip"
         )
-
-st.markdown("---")
-st.caption("Created automatically with AI ✨ — Posters, Blogs, Videos, and Social Media content ready to use.")
+    st.success("✅ All files generated successfully!")
